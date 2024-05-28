@@ -1,27 +1,27 @@
 #include <petscdmda.h>
 #include <petscksp.h>
+#include <petscmat.h>
 #include <petscoptions.h>
 #include <petscsys.h>
+#include <petscsystypes.h>
 
 int main(int argc, char **args) {
+  PetscInitialize(&argc, &args, (char *)0, "Solve a linear system with DMDA");
   Vec x, b; /* 近似解和右手边向量 */
   Mat A;    /* 系数矩阵 */
   KSP ksp;  /* 线性求解器上下文 */
   DM da;    /* 分布式数组上下文 */
   PetscErrorCode ierr;
-  PetscInt i, j, k, M = 10, N = 10, P = 10; /* 全局网格大小 */
+  PetscInt ex, ey, ez, startx, starty, startz, nx, ny, nz,
+      M = 10, N = 10, P = 10; /* 全局网格大小 */
+  MatStencil row[2], col[2];
   PetscOptionsGetInt(NULL, NULL, "-M", &M, NULL);
   N = M;
   P = M;
-  PetscMPIInt rank, size;
   PetscScalar v;
+  PetscScalar val_A[2][2];
 
-  PetscInitialize(&argc, &args, (char *)0, "Solve a linear system with DMDA");
 
-  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank);
-  CHKERRQ(ierr);
-  ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size);
-  CHKERRQ(ierr);
 
   /* 创建一个三维DMDA */
   ierr = DMDACreate3d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
@@ -52,54 +52,49 @@ int main(int argc, char **args) {
   CHKERRQ(ierr);
 
   /* 获取本地范围 */
-  DMDALocalInfo info;
-  ierr = DMDAGetLocalInfo(da, &info);
-  CHKERRQ(ierr);
+  PetscCall(
+      DMDAGetCorners(da, &startx, &starty, &startz, &nx, &ny, &nz));
 
   /* 设置矩阵A */
-  for (i = info.xs; i < info.xs + info.xm; i++) {
-    for (j = info.ys; j < info.ys + info.ym; j++) {
-      for (k = info.zs; k < info.zs + info.zm; k++) {
-        if (i > 0) {
-          v = -1.0;
-          ierr = MatSetValue(A, (i * N * P + j * P + k),
-                             ((i - 1) * N * P + j * P + k), v, INSERT_VALUES);
-          CHKERRQ(ierr);
+  for (ez = startz; ez < startz + nz; ez++) {
+    for (ey = starty; ey < starty + ny; ey++) {
+      for (ex = startx; ex < startx + nx; ex++) {
+        if (ex >= 1) {
+          row[0] = (MatStencil){.i = ex - 1, .j = ey, .k = ez};
+          row[1] = (MatStencil){.i = ex, .j = ey, .k = ez};
+          col[0] = (MatStencil){.i = ex - 1, .j = ey, .k = ez};
+          col[1] = (MatStencil){.i = ex, .j = ey, .k = ez};
+          val_A[0][0] = 1;
+          val_A[0][1] = -1;
+          val_A[1][0] = -1;
+          val_A[1][1] = 1;
+          PetscCall(MatSetValuesStencil(A, 2, &row[0], 2, &col[0], &val_A[0][0],
+                                        ADD_VALUES));
         }
-        if (i < M - 1) {
-          v = -1.0;
-          ierr = MatSetValue(A, (i * N * P + j * P + k),
-                             ((i + 1) * N * P + j * P + k), v, INSERT_VALUES);
-          CHKERRQ(ierr);
+        if (ey >= 1) {
+          row[0] = (MatStencil){.i = ex, .j = ey - 1, .k = ez};
+          row[1] = (MatStencil){.i = ex, .j = ey, .k = ez};
+          col[0] = (MatStencil){.i = ex, .j = ey - 1, .k = ez};
+          col[1] = (MatStencil){.i = ex, .j = ey, .k = ez};
+          val_A[0][0] = 1;
+          val_A[0][1] = -1;
+          val_A[1][0] = -1;
+          val_A[1][1] = 1;
+          PetscCall(MatSetValuesStencil(A, 2, &row[0], 2, &col[0], &val_A[0][0],
+                                        ADD_VALUES));
         }
-        if (j > 0) {
-          v = -1.0;
-          ierr = MatSetValue(A, (i * N * P + j * P + k),
-                             (i * N * P + (j - 1) * P + k), v, INSERT_VALUES);
-          CHKERRQ(ierr);
+        if (ez >= 1) {
+          row[0] = (MatStencil){.i = ex, .j = ey, .k = ez - 1};
+          row[1] = (MatStencil){.i = ex, .j = ey, .k = ez};
+          col[0] = (MatStencil){.i = ex, .j = ey, .k = ez - 1};
+          col[1] = (MatStencil){.i = ex, .j = ey, .k = ez};
+          val_A[0][0] = 1;
+          val_A[0][1] = -1;
+          val_A[1][0] = -1;
+          val_A[1][1] = 1;
+          PetscCall(MatSetValuesStencil(A, 2, &row[0], 2, &col[0], &val_A[0][0],
+                                        ADD_VALUES));
         }
-        if (j < N - 1) {
-          v = -1.0;
-          ierr = MatSetValue(A, (i * N * P + j * P + k),
-                             (i * N * P + (j + 1) * P + k), v, INSERT_VALUES);
-          CHKERRQ(ierr);
-        }
-        if (k > 0) {
-          v = -1.0;
-          ierr = MatSetValue(A, (i * N * P + j * P + k),
-                             (i * N * P + j * P + (k - 1)), v, INSERT_VALUES);
-          CHKERRQ(ierr);
-        }
-        if (k < P - 1) {
-          v = -1.0;
-          ierr = MatSetValue(A, (i * N * P + j * P + k),
-                             (i * N * P + j * P + (k + 1)), v, INSERT_VALUES);
-          CHKERRQ(ierr);
-        }
-        v = 6.0;
-        ierr = MatSetValue(A, (i * N * P + j * P + k), (i * N * P + j * P + k),
-                           v, INSERT_VALUES);
-        CHKERRQ(ierr);
       }
     }
   }
@@ -110,6 +105,8 @@ int main(int argc, char **args) {
   ierr = MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY);
   CHKERRQ(ierr);
 
+
+
   /* 创建线性求解器上下文 */
   ierr = KSPCreate(PETSC_COMM_WORLD, &ksp);
   CHKERRQ(ierr);
@@ -117,14 +114,12 @@ int main(int argc, char **args) {
   CHKERRQ(ierr);
   ierr = KSPSetFromOptions(ksp);
   CHKERRQ(ierr);
-
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Initialized.\n"));
   /* 求解线性系统 */
   ierr = KSPSolve(ksp, b, x);
   CHKERRQ(ierr);
-
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Done.\n"));
   /* 打印解向量 */
-  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "solved\n"));
-  CHKERRQ(ierr);
 
   /* 释放内存 */
   ierr = KSPDestroy(&ksp);
